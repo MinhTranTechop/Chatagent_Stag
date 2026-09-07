@@ -1,0 +1,10 @@
+{
+  "name": "evn-ai-agent",
+  "version": "1.0.0",
+  "description": "Full-stack AI Internal Document QA System (RAG) PoC",
+  "type": "module",
+  "scripts": {
+    "start:backend": "npm --prefix backend start",
+    "start:frontend": "npm --prefix frontend dev"
+  }
+}

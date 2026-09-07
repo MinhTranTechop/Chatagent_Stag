@@ -1,0 +1,60 @@
+name: CI/CD Pipeline - Deploy EVN Agent to Production
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚀 Checkout source code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 📦 Install Frontend dependencies & Build
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: 🔑 Configure SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_HOST || '161.118.222.23' }} >> ~/.ssh/known_hosts
+
+      - name: 📤 Deploy Backend & Frontend to Server
+        env:
+          HOST: ${{ secrets.SERVER_HOST || '161.118.222.23' }}
+          USER: ${{ secrets.SERVER_USER || 'ubuntu' }}
+        run: |
+          echo "Syncing backend code..."
+          ssh $USER@$HOST "mkdir -p /home/ubuntu/backend/data /home/ubuntu/backend/local_vector_store"
+          
+          # Copy backend source files
+          scp backend/server.js backend/ragService.js backend/initDB.js backend/package.json $USER@$HOST:/home/ubuntu/backend/
+          scp -r backend/data/* $USER@$HOST:/home/ubuntu/backend/data/
+
+          # Copy built frontend assets
+          echo "Deploying frontend build to Nginx..."
+          ssh $USER@$HOST "mkdir -p /home/ubuntu/dist"
+          scp -r frontend/dist/* $USER@$HOST:/home/ubuntu/dist/
+          ssh $USER@$HOST "sudo cp -r /home/ubuntu/dist/* /var/www/evn-agent/html/ && sudo chown -R www-data:www-data /var/www/evn-agent/html/"
+
+      - name: 🔄 Restart PM2 Backend Service
+        env:
+          HOST: ${{ secrets.SERVER_HOST || '161.118.222.23' }}
+          USER: ${{ secrets.SERVER_USER || 'ubuntu' }}
+        run: |
+          ssh $USER@$HOST "cd /home/ubuntu/backend && npm install --legacy-peer-deps && pm2 restart evn-agent-api"
+          echo "✅ Deployment completed successfully!"
