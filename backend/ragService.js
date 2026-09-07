@@ -38,19 +38,64 @@ function cosineSimilarity(vecA, vecB) {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-// 🧠 1. Thuật toán Semantic Chunking chuẩn kiến trúc (dựa trên Cosine Distance & Percentile Threshold)
+// Helper: Tách đoạn văn bản dài thành các đoạn an toàn không vượt quá maxChars (tương thích context length 512 tokens của mxbai-embed-large)
+function splitIntoSafeBlocks(text, maxChars = 1000) {
+  if (!text || text.length <= maxChars) return [text];
+
+  const paragraphs = text.split(/\n\n+/g);
+  const blocks = [];
+  let cur = "";
+
+  for (const p of paragraphs) {
+    if ((cur.length + p.length + 2) <= maxChars) {
+      cur = cur ? `${cur}\n\n${p}` : p;
+    } else {
+      if (cur) blocks.push(cur.trim());
+      if (p.length > maxChars) {
+        const lines = p.split(/\n/g);
+        let subCur = "";
+        for (const line of lines) {
+          if ((subCur.length + line.length + 1) <= maxChars) {
+            subCur = subCur ? `${subCur}\n${line}` : line;
+          } else {
+            if (subCur) blocks.push(subCur.trim());
+            subCur = line.slice(0, maxChars);
+          }
+        }
+        if (subCur) blocks.push(subCur.trim());
+        cur = "";
+      } else {
+        cur = p;
+      }
+    }
+  }
+  if (cur) blocks.push(cur.trim());
+  return blocks.filter((b) => b && b.length > 20);
+}
+
+// 🧠 1. Thuật toán Semantic Chunking chuẩn kiến trúc (tương thích mxbai-embed-large)
 export async function semanticChunkDocument(rawText, embeddings, metadata = {}) {
   // Tách văn bản thành các đơn vị ngữ nghĩa tự nhiên (theo đề mục Markdown ##, ### hoặc khối phân hệ)
-  const rawSections = rawText
+  const initialSections = rawText
     .split(/\n(?=(?:##\s+|###\s+|#\s+|---\n))/g)
     .map((s) => s.trim())
     .filter((s) => s.length > 20);
 
-  if (rawSections.length <= 1) {
-    return [{ pageContent: rawText, metadata }];
+  // Đảm bảo không đoạn đơn lẻ nào vượt quá trần context 512 tokens (~1000 ký tự tiếng Việt)
+  const rawSections = [];
+  for (const sec of initialSections) {
+    if (sec.length > 1000) {
+      rawSections.push(...splitIntoSafeBlocks(sec, 1000));
+    } else {
+      rawSections.push(sec);
+    }
   }
 
-  // Nhúng Vector từng đoạn bằng nomic-embed-text
+  if (rawSections.length <= 1) {
+    return [{ pageContent: rawText.slice(0, 1200), metadata }];
+  }
+
+  // Nhúng Vector từng đoạn bằng model mxbai-embed-large
   const sectionEmbeddings = await embeddings.embedDocuments(rawSections);
 
   // Tính khoảng cách ngữ nghĩa (Cosine Distance = 1 - Cosine Similarity) giữa các đoạn liền kề
@@ -70,7 +115,7 @@ export async function semanticChunkDocument(rawText, embeddings, metadata = {}) 
 
   console.log(`📐 [Semantic Chunking] Breakpoint Threshold (85th percentile): ${threshold.toFixed(4)}`);
 
-  // Gom các đoạn liền kề có độ tương đồng cao vào chung 1 chunk ngữ nghĩa hoàn chỉnh
+  // Gom các đoạn liền kề có độ tương đồng cao vào chung 1 chunk ngữ nghĩa hoàn chỉnh (giới hạn an toàn <= 1200 ký tự)
   const chunks = [];
   let currentGroup = [rawSections[0]];
   let currentLength = rawSections[0].length;
@@ -78,11 +123,11 @@ export async function semanticChunkDocument(rawText, embeddings, metadata = {}) 
   for (let i = 0; i < distances.length; i++) {
     const nextSection = rawSections[i + 1];
     const isTopicShift = distances[i] > threshold;
-    const isOverLimit = (currentLength + nextSection.length) > 3000;
+    const isOverLimit = (currentLength + nextSection.length + 2) > 1200;
 
     if (!isTopicShift && !isOverLimit) {
       currentGroup.push(nextSection);
-      currentLength += nextSection.length;
+      currentLength += nextSection.length + 2;
     } else {
       chunks.push({
         pageContent: currentGroup.join("\n\n"),
