@@ -15,9 +15,9 @@ const dbPath = path.join(__dirname, "evn_database.sqlite");
 const vectorStoreDirPath = path.join(__dirname, "local_vector_store");
 const vectorStoreFilePath = path.join(vectorStoreDirPath, "vectors.json");
 
-const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
-const OLLAMA_MODEL = "llama3.2:3b";
-const EMBEDDING_MODEL = "nomic-embed-text";
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.2:3b";
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "mxbai-embed-large";
 
 let llmModel = null;
 let vectorStore = null;
@@ -165,20 +165,62 @@ export function executeSqlQuery(sqlQuery) {
   });
 }
 
+// 🔍 Hàm kiểm tra và cảnh báo các model Ollama cần thiết khi khởi động
+export async function checkOllamaModels() {
+  const requiredModels = [
+    { name: EMBEDDING_MODEL, role: "Model Embedding đa ngôn ngữ" },
+    { name: OLLAMA_MODEL, role: "Model LLM trả lời RAG" },
+  ];
+
+  console.log("\n🔍 [Ollama HealthCheck] Đang kiểm tra các model yêu cầu trong Ollama...");
+  try {
+    const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
+    if (!res.ok) {
+      console.warn(`⚠️ [Ollama HealthCheck] Không thể kết nối tới Ollama tại ${OLLAMA_BASE_URL}. Hãy chắc chắn dịch vụ Ollama đang chạy!`);
+      return;
+    }
+    const data = await res.json();
+    const installed = (data.models || []).map((m) => m.name.toLowerCase());
+
+    for (const item of requiredModels) {
+      const isPresent = installed.some(
+        (name) => name === item.name.toLowerCase() || name.startsWith(`${item.name.toLowerCase()}:`)
+      );
+      if (isPresent) {
+        console.log(`✅ [Ollama] Model "${item.name}" (${item.role}) đã sẵn sàng.`);
+      } else {
+        console.warn("****************************************************************");
+        console.warn(`⚠️ [CẢNH BÁO OLLAMA] Chưa tìm thấy model "${item.name}" (${item.role})!`);
+        console.warn(`👉 Vui lòng mở Terminal và chạy lệnh sau để tải về:`);
+        console.warn(`   ollama pull ${item.name}`);
+        console.warn("****************************************************************");
+      }
+    }
+  } catch (err) {
+    console.warn(`⚠️ [Ollama HealthCheck] Không thể kết nối Ollama service: ${err.message}`);
+    console.warn(`👉 Hãy đảm bảo Ollama đang chạy: "ollama serve"`);
+  }
+}
+
 // 🧠 3. Khởi tạo Vector Store với Semantic Chunks & MemoryVectorStore
 export async function initializeRAG() {
   if (isInitialized) return;
 
   console.log("⚡ [EVN RAG & SQL Agent Service] Đang khởi tạo hệ thống Semantic RAG...");
 
+  // Kiểm tra các model cần thiết trong Ollama
+  await checkOllamaModels();
+
   if (!fs.existsSync(dbPath)) {
     await initDatabase();
   }
 
-  console.log(`🧬 [Ollama Embeddings] Khởi tạo nhúng Vector với model: ${EMBEDDING_MODEL}...`);
+  console.log(`🧬 [Ollama Embeddings] Khởi tạo nhúng Vector với model đa ngôn ngữ: ${EMBEDDING_MODEL} (timeout: 180000ms)...`);
   const embeddings = new OllamaEmbeddings({
     model: EMBEDDING_MODEL,
     baseUrl: OLLAMA_BASE_URL,
+    maxRetries: 3,
+    timeout: 180000,
   });
 
   // Áp dụng Semantic Chunking
@@ -193,12 +235,14 @@ export async function initializeRAG() {
     vectorStore = new MemoryVectorStore(embeddings);
   }
 
-  console.log(`🤖 [Local Ollama] Cấu hình ChatOllama (model: ${OLLAMA_MODEL}, baseUrl: ${OLLAMA_BASE_URL})...`);
+  console.log(`🤖 [Local Ollama] Cấu hình ChatOllama (model: ${OLLAMA_MODEL}, baseUrl: ${OLLAMA_BASE_URL}, timeout: 180000ms)...`);
   llmModel = new ChatOllama({
     model: OLLAMA_MODEL,
     baseUrl: OLLAMA_BASE_URL,
     temperature: 0.1,
     numPredict: 1024,
+    maxRetries: 3,
+    timeout: 180000,
   });
 
   isInitialized = true;
@@ -212,6 +256,8 @@ export async function getVectorDbInfo() {
       const embeddings = new OllamaEmbeddings({
         model: EMBEDDING_MODEL,
         baseUrl: OLLAMA_BASE_URL,
+        maxRetries: 3,
+        timeout: 180000,
       });
       const docChunks = await loadAndChunkDocs(embeddings);
       if (docChunks.length > 0) {
@@ -263,10 +309,12 @@ export async function reindexVectorStore() {
     console.warn("⚠️ [Vector DB Manager] Bỏ qua lỗi khi xóa cache:", err.message);
   }
 
-  // Bước 2: Nạp embeddings mới, đọc lại file .md mới, chunking và embedding lại từ đầu
+  // Bước 2: Nạp embeddings mới với model mxbai-embed-large (timeout: 180000ms), đọc file .md, chunking và embedding lại từ đầu
   const embeddings = new OllamaEmbeddings({
     model: EMBEDDING_MODEL,
     baseUrl: OLLAMA_BASE_URL,
+    maxRetries: 3,
+    timeout: 180000,
   });
 
   const docChunks = await loadAndChunkDocs(embeddings);
@@ -402,12 +450,7 @@ ${contextText}`;
       sources,
     };
   } catch (err) {
-    const errStr = String(err?.message || err);
-    console.error("❌ Lỗi RAG Engine:", errStr);
-
-    return {
-      answer: `⚠️ Hệ thống tạm thời bận: ${errStr}. Vui lòng thử lại sau ít phút!`,
-      sources: [],
-    };
+    console.error("❌ [RAG Engine] Lỗi chi tiết khi gọi Ollama / LangChain:", err);
+    throw new Error(err.message || String(err));
   }
 }

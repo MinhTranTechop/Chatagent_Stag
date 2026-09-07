@@ -96,11 +96,13 @@ app.post("/api/chat", async (req, res) => {
       sources: result.sources,
     });
   } catch (error) {
-    console.error("❌ Lỗi khi xử lý câu hỏi RAG:", error);
-    // BẮT BUỘC luôn trả về JSON hợp lệ, tuyệt đối không trả về plain text
+    console.error("❌ [API POST /api/chat] Lỗi xử lý chi tiết từ Ollama / LangChain:", error);
+    const detailError = error?.message || String(error);
+    // BẮT BUỘC trả về HTTP Status 500 cùng message: "Lỗi Backend: [chi tiết lỗi]", tuyệt đối không để request bị treo
     return res.status(500).json({
       success: false,
-      error: error.message || "Lỗi xử lý nội bộ",
+      message: `Lỗi Backend: ${detailError}`,
+      error: `Lỗi Backend: ${detailError}`,
     });
   }
 });
@@ -112,8 +114,10 @@ initializeRAG()
       console.log(`🚀 [Server] Backend server đang chạy thành công tại http://localhost:${PORT}`);
     });
 
-    // Cấu hình Timeout của ExpressJS Server lên 180,000ms (3 phút)
+    // Cấu hình Timeout của ExpressJS Server lên 180,000ms (3 phút) tránh hanging
     server.timeout = 180000;
+    server.keepAliveTimeout = 185000;
+    server.headersTimeout = 190000;
   })
   .catch((err) => {
     console.error("💥 Thất bại khi khởi động RAG Service:", err);

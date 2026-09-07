@@ -160,8 +160,8 @@ export default function VectorManager() {
             <Cpu className="h-6 w-6" />
           </div>
           <div>
-            <div className="text-sm font-bold text-slate-200">nomic-embed-text</div>
-            <div className="text-xs text-slate-400 font-medium">Model Embedding (Ollama)</div>
+            <div className="text-sm font-bold text-slate-200">mxbai-embed-large</div>
+            <div className="text-xs text-slate-400 font-medium">Model Embedding (Đa ngôn ngữ)</div>
           </div>
         </div>
       </div>
