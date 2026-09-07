@@ -197,7 +197,8 @@ export async function semanticChunkDocument(rawText, embeddings, metadata = {}) 
 export async function loadAndChunkDocs(embeddings) {
   const allChunks = [];
   const dataDir = path.join(__dirname, "data");
-  const fileNames = ["evn_knowledge.md", "quy-dinh-an-toan-dien.md"];
+  // CHỈ nạp đúng 1 file evn_knowledge.md duy nhất, loại bỏ hoàn toàn các file khác
+  const fileNames = ["evn_knowledge.md"];
 
   for (const fileName of fileNames) {
     const dataPath = path.join(dataDir, fileName);
@@ -556,14 +557,11 @@ export async function askQuestion(question) {
 
     const contextText = docs.map((d) => d.pageContent).join("\n\n---\n\n");
 
-    const systemPromptText = `Bạn là trợ lý AI chuyên gia trích xuất thông tin nội bộ của EVN.
-Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác, trung thực dựa trên Ngữ cảnh (Context) được cung cấp bên dưới.
-- Hãy đối chiếu các thuật ngữ hoặc từ đồng nghĩa tương ứng trong Ngữ cảnh (ví dụ: sự cố sập mạng LAN hoặc lỗi máy chủ Core tương ứng với sập nguồn mạng; SLA khôi phục dịch vụ RTO/RPO tương ứng với thời gian phục hồi; quy trình 5 bước vàng khi cắt điện bảo trì...).
-- TUYỆT ĐỐI KHÔNG tự sáng tác, suy diễn hay bịa đặt bất kỳ mốc thời gian, số liệu nào không xuất hiện trong Ngữ cảnh.
-- Chỉ dựa vào dữ liệu có trong Ngữ cảnh để trả lời, trung thực, ngắn gọn và rõ ràng.
-- Nếu trong Ngữ cảnh thực sự không chứa bất kỳ thông tin nào liên quan đến câu hỏi, hãy trả lời: "Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin cụ thể để trả lời câu hỏi này."
+    const systemPromptText = `Bạn là một hệ thống trích xuất văn bản nguyên tắc. BẠN BỊ CẤM SỬ DỤNG KIẾN THỨC PRE-TRAINED HOẶC INTERNET. Nhiệm vụ duy nhất của bạn là trả lời dựa trên phần NGỮ CẢNH được cung cấp.
+Nếu NGỮ CẢNH không chứa câu trả lời trực tiếp, BẠN BẮT BUỘC CHỈ IN RA: 'Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin.'
+Tuyệt đối KHÔNG suy diễn, KHÔNG tự phỏng đoán quy trình, KHÔNG thêm bớt số liệu.
 
-Ngữ cảnh:
+NGỮ CẢNH:
 ${contextText}`;
 
     console.log("🔍 [DEBUG RAG Context Chunks]:\n", contextText);
@@ -572,7 +570,13 @@ ${contextText}`;
       new SystemMessage(systemPromptText),
       new HumanMessage(question)
     ];
-    const res = await llmModel.invoke(messages);
+    const res = await llmModel.invoke(messages, {
+      options: {
+        temperature: 0,
+        top_k: 1,
+        top_p: 0.1,
+      },
+    });
     const answerContent = (res.content || String(res)).trim();
 
     const sources = docs.map((doc, idx) => ({
