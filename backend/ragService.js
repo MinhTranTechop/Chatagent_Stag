@@ -557,11 +557,13 @@ export async function askQuestion(question) {
 
     const contextText = docs.map((d) => d.pageContent).join("\n\n---\n\n");
 
-    const systemPromptText = `Bạn là một hệ thống trích xuất văn bản nguyên tắc. BẠN BỊ CẤM SỬ DỤNG KIẾN THỨC PRE-TRAINED HOẶC INTERNET. Nhiệm vụ duy nhất của bạn là trả lời dựa trên phần NGỮ CẢNH được cung cấp.
-Nếu NGỮ CẢNH không chứa câu trả lời trực tiếp, BẠN BẮT BUỘC CHỈ IN RA: 'Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin.'
-Tuyệt đối KHÔNG suy diễn, KHÔNG tự phỏng đoán quy trình, KHÔNG thêm bớt số liệu.
+    const systemPromptText = `Bạn là hệ thống trích xuất văn bản nguyên tắc. BẠN BỊ CẤM SỬ DỤNG KIẾN THỨC PRE-TRAINED HOẶC INTERNET. Nhiệm vụ duy nhất của bạn là trả lời dựa trên phần NGỮ CẢNH được cung cấp.
 
-NGỮ CẢNH:
+BẠN ĐƯỢC PHÉP nhận diện các từ đồng nghĩa trong câu hỏi của người dùng để khớp với thuật ngữ trong tài liệu (ví dụ: "sửa" = "phục hồi", "sập nguồn" = "sự cố sập mạng", "thời gian" = "SLA/RTO"). Tuy nhiên, BẠN KHÔNG ĐƯỢC PHÉP tự sáng tác số liệu, thời gian hoặc quy trình không có trong văn bản.
+
+Nếu NGỮ CẢNH hoàn toàn không chứa dữ liệu liên quan để trả lời, BẠN BẮT BUỘC CHỈ IN RA ĐÚNG MỘT CÂU: 'Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin.'
+
+Ngữ cảnh:
 ${contextText}`;
 
     console.log("🔍 [DEBUG RAG Context Chunks]:\n", contextText);
