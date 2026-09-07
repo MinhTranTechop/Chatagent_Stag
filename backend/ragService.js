@@ -260,12 +260,12 @@ export async function initializeRAG() {
     await initDatabase();
   }
 
-  console.log(`🧬 [Ollama Embeddings] Khởi tạo nhúng Vector với model đa ngôn ngữ: ${EMBEDDING_MODEL} (timeout: 180000ms)...`);
+  console.log(`🧬 [Ollama Embeddings] Khởi tạo nhúng Vector với model đa ngôn ngữ: ${EMBEDDING_MODEL} (timeout: 300000ms)...`);
   const embeddings = new OllamaEmbeddings({
     model: EMBEDDING_MODEL,
     baseUrl: OLLAMA_BASE_URL,
     maxRetries: 3,
-    timeout: 180000,
+    timeout: 300000,
   });
 
   // Áp dụng Semantic Chunking
@@ -280,14 +280,14 @@ export async function initializeRAG() {
     vectorStore = new MemoryVectorStore(embeddings);
   }
 
-  console.log(`🤖 [Local Ollama] Cấu hình ChatOllama (model: ${OLLAMA_MODEL}, baseUrl: ${OLLAMA_BASE_URL}, timeout: 180000ms)...`);
+  console.log(`🤖 [Local Ollama] Cấu hình ChatOllama (model: ${OLLAMA_MODEL}, baseUrl: ${OLLAMA_BASE_URL}, timeout: 300000ms, numPredict: 512)...`);
   llmModel = new ChatOllama({
     model: OLLAMA_MODEL,
     baseUrl: OLLAMA_BASE_URL,
     temperature: 0.1,
-    numPredict: 1024,
+    numPredict: 512,
     maxRetries: 3,
-    timeout: 180000,
+    timeout: 300000,
   });
 
   isInitialized = true;
@@ -302,7 +302,7 @@ export async function getVectorDbInfo() {
         model: EMBEDDING_MODEL,
         baseUrl: OLLAMA_BASE_URL,
         maxRetries: 3,
-        timeout: 180000,
+        timeout: 300000,
       });
       const docChunks = await loadAndChunkDocs(embeddings);
       if (docChunks.length > 0) {
@@ -354,12 +354,12 @@ export async function reindexVectorStore() {
     console.warn("⚠️ [Vector DB Manager] Bỏ qua lỗi khi xóa cache:", err.message);
   }
 
-  // Bước 2: Nạp embeddings mới với model mxbai-embed-large (timeout: 180000ms), đọc file .md, chunking và embedding lại từ đầu
+  // Bước 2: Nạp embeddings mới với model mxbai-embed-large (timeout: 300000ms), đọc file .md, chunking và embedding lại từ đầu
   const embeddings = new OllamaEmbeddings({
     model: EMBEDDING_MODEL,
     baseUrl: OLLAMA_BASE_URL,
     maxRetries: 3,
-    timeout: 180000,
+    timeout: 300000,
   });
 
   const docChunks = await loadAndChunkDocs(embeddings);

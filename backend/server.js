@@ -107,17 +107,17 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// Initialize RAG and start Express server with server.timeout = 180000ms (3 minutes)
+// Initialize RAG and start Express server with server.timeout = 300000ms (5 minutes - khớp cấu hình Nginx 300s)
 initializeRAG()
   .then(() => {
     const server = app.listen(PORT, () => {
       console.log(`🚀 [Server] Backend server đang chạy thành công tại http://localhost:${PORT}`);
     });
 
-    // Cấu hình Timeout của ExpressJS Server lên 180,000ms (3 phút) tránh hanging
-    server.timeout = 180000;
-    server.keepAliveTimeout = 185000;
-    server.headersTimeout = 190000;
+    // Cấu hình Timeout của ExpressJS Server lên 300,000ms (5 phút) tránh hanging
+    server.timeout = 300000;
+    server.keepAliveTimeout = 305000;
+    server.headersTimeout = 310000;
   })
   .catch((err) => {
     console.error("💥 Thất bại khi khởi động RAG Service:", err);
