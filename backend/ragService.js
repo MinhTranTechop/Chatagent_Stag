@@ -1,4 +1,6 @@
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { MultiQueryRetriever } from "langchain/retrievers/multi_query";
+import { PromptTemplate } from "@langchain/core/prompts";
 import { ChatOllama, OllamaEmbeddings } from "@langchain/ollama";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { DynamicStructuredTool } from "@langchain/core/tools";
@@ -21,7 +23,50 @@ const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "mxbai-embed-large";
 
 let llmModel = null;
 let vectorStore = null;
+let multiQueryRetriever = null;
 let isInitialized = false;
+
+// 🔀 Prompt cho Multi-Query Retriever: Dùng LLM (Llama 3.2) sinh 3 biến thể câu hỏi bằng tiếng Việt chuyên ngành
+export const MULTI_QUERY_PROMPT = new PromptTemplate({
+  inputVariables: ["question", "queryCount"],
+  template: `Bạn là chuyên gia ngôn ngữ AI hỗ trợ tra cứu tri thức kỹ thuật và quy trình nội bộ EVN.
+Nhiệm vụ của bạn là tạo ra {queryCount} phiên bản câu hỏi tìm kiếm khác nhau bằng TIẾNG VIỆT từ câu hỏi gốc của người dùng để truy vấn cơ sở dữ liệu vector.
+Mục tiêu là tạo ra các góc nhìn đa chiều, bổ sung từ đồng nghĩa hoặc thuật ngữ kỹ thuật chuyên ngành liên quan (ví dụ: quy trình DR khi sập mạng, SLA khôi phục dịch vụ RTO RPO, thời gian phục hồi máy chủ Core, quy định an toàn điện...) nhằm khắc phục hạn chế về khoảng cách ngữ nghĩa (semantic gap) của tìm kiếm tương đồng vector.
+
+BẮT BUỘC cung cấp các câu hỏi thay thế bằng Tiếng Việt, mỗi câu trên 1 dòng nằm giữa cặp thẻ XML <questions> và </questions>. Không đánh số, không thêm lời chào hay giải thích.
+Ví dụ:
+<questions>
+Quy trình DR khi sập mạng?
+SLA khôi phục dịch vụ RTO RPO?
+Thời gian phục hồi máy chủ Core?
+</questions>
+
+Câu hỏi gốc: {question}`,
+});
+
+// Helper: Khởi tạo MultiQueryRetriever từ Vector Store & LLM
+export function getOrCreateMultiQueryRetriever() {
+  if (!vectorStore || !llmModel) return null;
+
+  // Lấy base retriever từ vectorStore với top 3 chunks cho mỗi query
+  const baseRetriever = vectorStore.asRetriever(3);
+
+  // Polyfill cho getRelevantDocuments trong runtime LangChain 0.3+
+  if (!baseRetriever.getRelevantDocuments) {
+    baseRetriever.getRelevantDocuments = (query) => baseRetriever.invoke(query);
+  }
+
+  multiQueryRetriever = MultiQueryRetriever.fromLLM({
+    llm: llmModel,
+    retriever: baseRetriever,
+    verbose: true,
+    queryCount: 3,
+    prompt: MULTI_QUERY_PROMPT,
+  });
+
+  console.log("🔀 [Multi-Query Retriever] Đã khởi tạo thành công MultiQueryRetriever (verbose: true, queryCount: 3).");
+  return multiQueryRetriever;
+}
 
 // Helper: Tính Cosine Similarity giữa 2 vector
 function cosineSimilarity(vecA, vecB) {
@@ -290,6 +335,9 @@ export async function initializeRAG() {
     timeout: 300000,
   });
 
+  // Khởi tạo MultiQueryRetriever
+  getOrCreateMultiQueryRetriever();
+
   isInitialized = true;
   console.log(`✅ [EVN Agent] Hệ thống sẵn sàng với Ollama Local (${OLLAMA_MODEL} + ${EMBEDDING_MODEL})!`);
 }
@@ -367,6 +415,7 @@ export async function reindexVectorStore() {
 
   if (docChunks.length > 0) {
     vectorStore = await MemoryVectorStore.fromDocuments(docChunks, embeddings);
+    getOrCreateMultiQueryRetriever();
     console.log("✅ [Vector DB Manager] Semantic Re-Index hoàn tất thành công!");
   }
 
@@ -463,19 +512,46 @@ export async function askQuestion(question) {
   }
 
   try {
-    // 🔎 Tìm kiếm Semantic Vector Similarity Search 5 đoạn ngữ nghĩa phù hợp nhất
-    const docs = await vectorStore.similaritySearch(question, 5);
+    // 🔎 1. Sử dụng MultiQueryRetriever (LangChain) để giải quyết Semantic Gap
+    console.log(`\n🔀 [Multi-Query Retriever] Khởi động truy vấn đa chiều cho câu hỏi: "${question}"`);
+
+    let retrieverInstance = multiQueryRetriever;
+    if (!retrieverInstance) {
+      retrieverInstance = getOrCreateMultiQueryRetriever();
+    }
+
+    let docs = [];
+    if (retrieverInstance) {
+      try {
+        docs = await retrieverInstance.invoke(question);
+      } catch (mqErr) {
+        console.warn("⚠️ [Multi-Query Retriever] Lỗi khi chạy MultiQueryRetriever, fallback similaritySearch:", mqErr.message);
+        docs = await vectorStore.similaritySearch(question, 5);
+      }
+    } else {
+      docs = await vectorStore.similaritySearch(question, 5);
+    }
+
+    // Nếu kết quả rỗng, fallback tìm kiếm tương đồng trực tiếp
+    if (!docs || docs.length === 0) {
+      console.warn("⚠️ [Multi-Query Retriever] Không tìm thấy kết quả từ MultiQuery, fallback similaritySearch trực tiếp...");
+      docs = await vectorStore.similaritySearch(question, 5);
+    }
+
+    console.log(`📚 [Multi-Query Retriever] Đã thu thập và hợp nhất ${docs.length} semantic chunks độc nhất.`);
+
     const contextText = docs.map((d) => d.pageContent).join("\n\n---\n\n");
 
-    const systemPromptText = `Bạn là công cụ Trích Xuất Dữ Liệu nội bộ của EVN.
-Nhiệm vụ của bạn là trả lời câu hỏi CHỈ DỰA VÀO phần Ngữ cảnh (Context) bên dưới.
-NGHIÊM CẤM sử dụng kiến thức bên ngoài. NGHIÊM CẤM tự định nghĩa, giải thích các khái niệm chung chung hoặc bịa đặt thông tin.
-Nếu Ngữ cảnh không chứa dữ liệu chính xác để trả lời, BẮT BUỘC chỉ in ra ĐÚNG 1 CÂU SAU ĐÂY và DỪNG LẠI: "Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin cụ thể để trả lời câu hỏi này."
+    const systemPromptText = `Bạn là trợ lý AI chuyên gia trích xuất thông tin nội bộ của EVN.
+Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác dựa trên Ngữ cảnh (Context) được cung cấp bên dưới.
+Hãy liên kết các khái niệm đồng nghĩa hoặc thuật ngữ kỹ thuật liên quan (ví dụ: sập nguồn mạng, thời gian sửa mạng tương ứng với sự cố sập mạng LAN hoặc lỗi máy chủ Core, cam kết thời gian phục hồi dịch vụ RTO/RPO; cắt điện an toàn, phiếu thao tác...).
+Chỉ dựa vào dữ liệu có trong Ngữ cảnh để trả lời, trung thực, ngắn gọn và rõ ràng.
+Nếu trong Ngữ cảnh thực sự không chứa bất kỳ thông tin nào liên quan đến câu hỏi, hãy trả lời: "Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin cụ thể để trả lời câu hỏi này."
 
 Ngữ cảnh:
 ${contextText}`;
 
-    console.log("🔍 [DEBUG RAG]:\n", contextText);
+    console.log("🔍 [DEBUG RAG Context Chunks]:\n", contextText);
 
     const messages = [
       new SystemMessage(systemPromptText),
