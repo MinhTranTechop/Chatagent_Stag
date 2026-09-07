@@ -200,11 +200,21 @@ export async function loadAndChunkDocs(embeddings) {
   const fileNames = ["evn_knowledge.md", "quy-dinh-an-toan-dien.md"];
 
   for (const fileName of fileNames) {
-    let filePath = path.join(dataDir, fileName);
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(__dirname, fileName);
+    const dataPath = path.join(dataDir, fileName);
+    const rootPath = path.join(__dirname, fileName);
+    let filePath = null;
+
+    if (fs.existsSync(dataPath) && fs.existsSync(rootPath)) {
+      const mtimeData = fs.statSync(dataPath).mtimeMs;
+      const mtimeRoot = fs.statSync(rootPath).mtimeMs;
+      filePath = mtimeRoot >= mtimeData ? rootPath : dataPath;
+    } else if (fs.existsSync(dataPath)) {
+      filePath = dataPath;
+    } else if (fs.existsSync(rootPath)) {
+      filePath = rootPath;
     }
-    if (fs.existsSync(filePath)) {
+
+    if (filePath && fs.existsSync(filePath)) {
       const rawText = fs.readFileSync(filePath, "utf-8");
       const fileMetadata = { source: fileName };
       const fileChunks = await semanticChunkDocument(rawText, embeddings, fileMetadata);
@@ -325,11 +335,15 @@ export async function initializeRAG() {
     vectorStore = new MemoryVectorStore(embeddings);
   }
 
-  console.log(`🤖 [Local Ollama] Cấu hình ChatOllama (model: ${OLLAMA_MODEL}, baseUrl: ${OLLAMA_BASE_URL}, timeout: 300000ms, numPredict: 512)...`);
+  console.log(`🤖 [Local Ollama] Cấu hình ChatOllama (model: ${OLLAMA_MODEL}, baseUrl: ${OLLAMA_BASE_URL}, temperature: 0, top_k: 1, top_p: 0.1, timeout: 300000ms, numPredict: 512)...`);
   llmModel = new ChatOllama({
     model: OLLAMA_MODEL,
     baseUrl: OLLAMA_BASE_URL,
-    temperature: 0.1,
+    temperature: 0,
+    top_k: 1,
+    top_p: 0.1,
+    topK: 1,
+    topP: 0.1,
     numPredict: 512,
     maxRetries: 3,
     timeout: 300000,
@@ -543,10 +557,11 @@ export async function askQuestion(question) {
     const contextText = docs.map((d) => d.pageContent).join("\n\n---\n\n");
 
     const systemPromptText = `Bạn là trợ lý AI chuyên gia trích xuất thông tin nội bộ của EVN.
-Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác dựa trên Ngữ cảnh (Context) được cung cấp bên dưới.
-Hãy liên kết các khái niệm đồng nghĩa hoặc thuật ngữ kỹ thuật liên quan (ví dụ: sập nguồn mạng, thời gian sửa mạng tương ứng với sự cố sập mạng LAN hoặc lỗi máy chủ Core, cam kết thời gian phục hồi dịch vụ RTO/RPO; cắt điện an toàn, phiếu thao tác...).
-Chỉ dựa vào dữ liệu có trong Ngữ cảnh để trả lời, trung thực, ngắn gọn và rõ ràng.
-Nếu trong Ngữ cảnh thực sự không chứa bất kỳ thông tin nào liên quan đến câu hỏi, hãy trả lời: "Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin cụ thể để trả lời câu hỏi này."
+Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác, trung thực dựa trên Ngữ cảnh (Context) được cung cấp bên dưới.
+- Hãy đối chiếu các thuật ngữ hoặc từ đồng nghĩa tương ứng trong Ngữ cảnh (ví dụ: sự cố sập mạng LAN hoặc lỗi máy chủ Core tương ứng với sập nguồn mạng; SLA khôi phục dịch vụ RTO/RPO tương ứng với thời gian phục hồi; quy trình 5 bước vàng khi cắt điện bảo trì...).
+- TUYỆT ĐỐI KHÔNG tự sáng tác, suy diễn hay bịa đặt bất kỳ mốc thời gian, số liệu nào không xuất hiện trong Ngữ cảnh.
+- Chỉ dựa vào dữ liệu có trong Ngữ cảnh để trả lời, trung thực, ngắn gọn và rõ ràng.
+- Nếu trong Ngữ cảnh thực sự không chứa bất kỳ thông tin nào liên quan đến câu hỏi, hãy trả lời: "Dựa trên tài liệu nội bộ, tôi không tìm thấy thông tin cụ thể để trả lời câu hỏi này."
 
 Ngữ cảnh:
 ${contextText}`;
